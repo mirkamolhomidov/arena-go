@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlmodel
+python-dotenv
+asyncpg
+psycopg2
+aiogram
+alembic
+geoalchemy2
