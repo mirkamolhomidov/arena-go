@@ -1,3 +1,9 @@
+.gitignore
+/app/models/__pycache__
+/app/services/__pycache__
+/app/routers/__pycache__
+/app/schemas/__pycache__
+
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 
