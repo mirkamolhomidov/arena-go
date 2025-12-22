@@ -5,6 +5,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 from sqlmodel import SQLModel
+from app.config import settings
 
 # MUHIM: Avval load_dotenv
 load_dotenv()
@@ -29,7 +30,7 @@ if config.config_file_name is not None:
 
 target_metadata = SQLModel.metadata
 
-DATABASE_URL = os.getenv("DATABASE_URL_SYNC")
+DATABASE_URL = settings.DATABASE_URL_SYNC
 
 def run_migrations_offline():
     context.configure(

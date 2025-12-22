@@ -1,8 +1,9 @@
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     DATABASE_URL_SYNC: str
+    DATABASE_URL_ASYNC: str
 
     class Config:
         env_file = ".env"

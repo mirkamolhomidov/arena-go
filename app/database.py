@@ -1,10 +1,8 @@
-import os
 from sqlmodel import SQLModel, create_engine, Session
-from dotenv import load_dotenv
+from app.config import settings
 
-load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL_SYNC")
+DATABASE_URL = settings.DATABASE_URL_SYNC
 engine = create_engine(DATABASE_URL, echo=True)
 
 

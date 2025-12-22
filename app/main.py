@@ -1,13 +1,13 @@
 from fastapi import FastAPI
 from app.database import create_db_and_tables
-from app.routers import districts
+from app.routers.routers import Routes
 
 app = FastAPI(
     title="Stadium bot API",
     version="1.0.0"
 )
 
-app.include_router(districts.router)
+Routes(app)
 
 @app.on_event("startup")
 def on_startup():
