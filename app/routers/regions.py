@@ -4,13 +4,14 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.schemas.regions import DistrictRead, LocalAreaRead, RegionRead
-from app.services.regions import list_districts, list_local_areas, list_regions
+from app.services.regions import RegionService
 
 
 regionsRouter = APIRouter(
     prefix="/locations",
     tags=["Locations"]
 )
+regionService = RegionService()
 
 # for regions
 @regionsRouter.get("/regions", response_model=List[RegionRead])
@@ -20,7 +21,7 @@ def get_regions(
     ),
     session: Session = Depends(get_session)
 ):
-    return list_regions(session, region_id)
+    return regionService.list_regions(session, region_id)
 
 # for districts
 @regionsRouter.get("/districts", response_model=List[DistrictRead])
@@ -33,7 +34,7 @@ def get_districts(
     ),
     session: Session = Depends(get_session)
 ):
-    return list_districts(session, region_id, district_id)
+    return regionService.list_districts(session, region_id, district_id)
 
 # for local areas
 @regionsRouter.get("/local-areas", response_model=List[LocalAreaRead])
@@ -49,4 +50,4 @@ def get_local_areas(
     ),
     session: Session = Depends(get_session)
 ):
-    return list_local_areas(session, region_id, district_id, local_area_id)
+    return regionService.list_local_areas(session, region_id, district_id, local_area_id)
