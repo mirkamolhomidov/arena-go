@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import HTTPException
 from geoalchemy2 import Geometry, WKTElement
 from sqlalchemy import cast, func, text
@@ -78,9 +79,10 @@ class StadiumService:
             "name": stadium.name,
             "address": stadium.address,
             "phone": stadium.phone,
-            "working_time": stadium.working_time,
+            "start_time": stadium.start_time,
+            "end_time": stadium.end_time,
             "price_per_hour": stadium.price_per_hour,
-            "status": stadium.status,
+            "status": self.get_stadium_status(stadium.start_time, stadium.end_time),
             "local_area": area_name,
             "location_url": f"https://www.google.com/maps?q={row.lat},{row.long}"
         }
@@ -89,6 +91,14 @@ class StadiumService:
             data["distance"] = self.formatDistance(row.distance_meters)
 
         return data
+
+    def get_stadium_status(self, start_time, end_time) -> str:
+        now = datetime.now().time()
+
+        if start_time < end_time:
+            return "open" if start_time <= now <= end_time else "closed"
+        else:
+            return "open" if (now >= start_time or now <= end_time) else "closed"
 
     def formatDistance(self, meters: float) -> str:
         if meters < 1000:

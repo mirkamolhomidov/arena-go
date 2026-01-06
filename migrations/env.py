@@ -5,7 +5,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 from sqlmodel import SQLModel
-from app.config import settings
+from app.core.config import settings
 
 # MUHIM: Avval load_dotenv
 load_dotenv()
