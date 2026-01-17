@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
@@ -41,7 +41,7 @@ def create_stadium(
 ):
     new_stadium = stadiumService.createStadium(session=session, data=data)
     return {
-        "message": "Muvaffaqiyatli yaratildi.",
+        "message": "Muvaffaqiyatli qo'shildi.",
         "data": new_stadium.model_dump(exclude={"location"}),
         "coordinates": {"lat": data.lat, "long": data.long}
     }

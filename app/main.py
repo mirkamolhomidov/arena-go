@@ -16,7 +16,6 @@ app = FastAPI(
 
 Routes('/api', app)
 
-
 @app.get("/")
 def root():
     return {"message": "OK"}

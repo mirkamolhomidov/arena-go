@@ -5,7 +5,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 from sqlmodel import SQLModel
-from app.config import settings
+from app.core.config import settings
 
 # MUHIM: Avval load_dotenv
 load_dotenv()
@@ -20,7 +20,6 @@ from app.models.local_areas import LocalAreas
 from app.models.stadiums import Stadiums
 from app.models.users import Users
 from app.models.stadium_images import StadiumImages
-from app.models.admins import Admins
 from app.models.bookings import Bookings
 
 config = context.config
@@ -31,6 +30,11 @@ if config.config_file_name is not None:
 target_metadata = SQLModel.metadata
 
 DATABASE_URL = settings.DATABASE_URL_SYNC
+
+def include_object(object, name, type_, reflected, compare_to):
+    if type_ == "table" and name == "spatial_ref_sys":
+        return False
+    return True
 
 def run_migrations_offline():
     context.configure(
@@ -53,6 +57,7 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

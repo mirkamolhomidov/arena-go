@@ -3,7 +3,9 @@ uvicorn
 sqlmodel
 python-dotenv
 asyncpg
-psycopg2
+psycopg2-binary
 aiogram
 alembic
 geoalchemy2
+aiohttp
+httpx

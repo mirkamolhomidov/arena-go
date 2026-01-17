@@ -1,3 +1,4 @@
+from datetime import time
 import re
 from pydantic import field_validator
 from sqlmodel import SQLModel, Field
@@ -19,11 +20,8 @@ class StadiumCreate(SQLModel):
         max_length=100,
         description="Telefon raqam"
     )
-    working_time: str = Field(
-        min_length=3,
-        max_length=200,
-        description="Ish vaqti"
-    )
+    start_time: time
+    end_time: time
     price_per_hour: Decimal = Field(
         ge=0,
         description="Soatlik narx"
