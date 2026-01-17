@@ -4,7 +4,6 @@ from .local_areas import LocalAreas
 from .stadiums import Stadiums
 from .stadium_images import StadiumImages
 from .bookings import Bookings
-from .admins import Admins
 from .users import Users
 
 __all__ = [
@@ -14,6 +13,5 @@ __all__ = [
     "Stadiums",
     "Users",
     "StadiumImages",
-    "Admins",
     "Bookings"
 ]

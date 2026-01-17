@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     
     WEBHOOK_URL: str | None = None
     WEBHOOK_PATH: str ='/webhook'
+    BASE_URL: str
 
     class Config:
         env_file = ".env"
