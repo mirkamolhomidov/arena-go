@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import model_validator, field_validator
@@ -8,47 +8,53 @@ from app.models.bookings import BookingStatus
 
 
 class BookingCreate(SQLModel):
-    stadium_id: int = Field(description="Stadion ID")
-    user_telegram_id: int
+    stadium_id: int = Field(gt=0, description="Stadion ID")
+    user_telegram_id: int = Field(gt=0)
 
-    booking_date: str
-    start_time: str
-    end_time: str
+    booking_date: date
+    start_time: time
+    end_time: time
 
     status: Optional[BookingStatus] = BookingStatus.CONFIRMED
 
-    @model_validator(mode="before")
+    @field_validator("booking_date", mode="before")
     @classmethod
-    def validate_formats(cls, data: dict):
-        errors = []
+    def parse_booking_date(cls, v):
+        if isinstance(v, date) and not isinstance(v, datetime):
+            return v
 
-        if "booking_date" in data:
+        if isinstance(v, str):
             try:
-                datetime.strptime(data["booking_date"], "%Y-%m-%d")
-            except Exception:
-                errors.append("Band qilish sanasi noto'g'ri. To'g'ri format: 2026-01-02")
+                return datetime.strptime(v, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError(
+                    "Band qilish sanasi noto'g'ri. To'g'ri format: 2026-01-02"
+                ) from exc
 
-        if "start_time" in data:
-            try:
-                datetime.strptime(data["start_time"], "%H:%M")
-            except Exception:
-                errors.append("Boshlash vaqti noto'g'ri. To'g'ri format: 09:30")
+        raise ValueError("Band qilish sanasi noto'g'ri")
 
-        if "end_time" in data:
-            try:
-                datetime.strptime(data["end_time"], "%H:%M")
-            except Exception:
-                errors.append("Tugash vaqti noto'g'ri. To'g'ri format: 23:45")
-
-        if errors:
-            raise ValueError(" | ".join(errors))
-
-        return data
-
-    @field_validator("booking_date")
+    @field_validator("start_time", "end_time", mode="before")
     @classmethod
-    def check_not_past(cls, v: str):
-        parsed_date = datetime.strptime(v, "%Y-%m-%d").date()
-        if parsed_date < date.today():
+    def parse_booking_time(cls, v):
+        if isinstance(v, time):
+            return v
+
+        if isinstance(v, str):
+            try:
+                return datetime.strptime(v, "%H:%M").time()
+            except ValueError as exc:
+                raise ValueError(
+                    "Vaqt noto'g'ri. To'g'ri format: 09:30"
+                ) from exc
+
+        raise ValueError("Vaqt noto'g'ri")
+
+    @model_validator(mode="after")
+    def validate_booking(self):
+        if self.booking_date < date.today():
             raise ValueError("O'tgan sanaga band qilish mumkin emas")
-        return v
+
+        if self.start_time >= self.end_time:
+            raise ValueError("Boshlanish vaqti tugash vaqtidan oldin bo'lishi kerak")
+
+        return self

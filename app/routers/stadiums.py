@@ -1,9 +1,10 @@
+"""Expose stadium discovery and management endpoints."""
+
 from typing import Optional
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.database import get_session
-from app.models.stadiums import Stadiums
 from app.schemas.stadiums import StadiumCreate
 from app.services.stadiums import StadiumService
 
@@ -16,30 +17,52 @@ stadiumService = StadiumService()
 
 
 @stadiumsRouter.get('/nearest')
-def get_nearest(
+async def get_nearest(
     lat: float,
     long: float,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
-    return stadiumService.getNearestStadiums(session, lat, long)
+    """Return the nearest stadiums to the provided coordinates."""
+    return await stadiumService.getNearestStadiums(session, lat, long)
 
 
 @stadiumsRouter.get('/location')
-def get_stadiums(
+async def get_stadiums(
     region_id: Optional[int] = None,
     district_id: Optional[int] = None,
     local_area_id: Optional[int] = None,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
-    return stadiumService.getRegionStadiums(session, region_id, district_id, local_area_id)
+    """Return stadiums filtered by location hierarchy."""
+    return await stadiumService.getRegionStadiums(
+        session,
+        region_id,
+        district_id,
+        local_area_id,
+    )
+
+
+@stadiumsRouter.get('/managed')
+async def get_managed_stadiums(
+    telegram_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    """Return stadiums visible to the current admin actor."""
+    return await stadiumService.getManagedStadiums(session, telegram_id)
 
 
 @stadiumsRouter.post('/create')
-def create_stadium(
+async def create_stadium(
     data: StadiumCreate,
-    session: Session = Depends(get_session)
+    actor_telegram_id: int,
+    session: AsyncSession = Depends(get_session)
 ):
-    new_stadium = stadiumService.createStadium(session=session, data=data)
+    """Create a stadium through a superadmin-scoped endpoint."""
+    new_stadium = await stadiumService.createStadium(
+        session=session,
+        data=data,
+        actor_telegram_id=actor_telegram_id,
+    )
     return {
         "message": "Muvaffaqiyatli qo'shildi.",
         "data": new_stadium.model_dump(exclude={"location"}),
