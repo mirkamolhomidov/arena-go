@@ -19,6 +19,7 @@ from app.models.districts import Districts
 from app.models.local_areas import LocalAreas
 from app.models.stadiums import Stadiums
 from app.models.users import Users
+from app.models.stadium_admins import StadiumAdmins
 from app.models.stadium_images import StadiumImages
 from app.models.bookings import Bookings
 
