@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from typing import Optional
 
-from pydantic import model_validator, field_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import Field, SQLModel
 
 from app.models.bookings import BookingStatus
@@ -15,7 +15,7 @@ class BookingCreate(SQLModel):
     start_time: time
     end_time: time
 
-    status: Optional[BookingStatus] = BookingStatus.CONFIRMED
+    status: Optional[BookingStatus] = BookingStatus.PENDING
 
     @field_validator("booking_date", mode="before")
     @classmethod

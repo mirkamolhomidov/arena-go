@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -14,7 +14,15 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from app.bot.handlers.user.stadium_common import format_price, format_time_value
+from app.bot.handlers.user.stadium_common import (
+    format_amenities,
+    format_condition_score,
+    format_field_size,
+    format_price,
+    format_time_value,
+    get_booking_status_badge,
+    normalize_booking_status,
+)
 from app.bot.keyboards.main_menu import get_main_menu_for_user
 from app.bot.states.user import AdminPanelFlow
 from app.core.config import settings
@@ -33,8 +41,9 @@ STADIUM_CREATION_STATES = (
     AdminPanelFlow.waiting_stadium_address,
     AdminPanelFlow.waiting_stadium_phone,
     AdminPanelFlow.waiting_stadium_price,
-    AdminPanelFlow.waiting_stadium_start_time,
-    AdminPanelFlow.waiting_stadium_end_time,
+    AdminPanelFlow.choosing_stadium_field_size,
+    AdminPanelFlow.waiting_stadium_condition_score,
+    AdminPanelFlow.waiting_stadium_amenities,
     AdminPanelFlow.waiting_stadium_location,
     *STADIUM_LOCATION_STATES,
 )
@@ -90,6 +99,18 @@ async def cancel_admin_booking(admin_telegram_id: int, booking_id: int):
     async with httpx.AsyncClient() as client:
         response = await client.patch(
             f"{settings.BASE_URL}/bookings/cancel-booking/{booking_id}",
+            params={"admin_telegram_id": admin_telegram_id},
+            timeout=15.0,
+        )
+
+    response.raise_for_status()
+    return response.json()
+
+
+async def approve_admin_booking(admin_telegram_id: int, booking_id: int):
+    async with httpx.AsyncClient() as client:
+        response = await client.patch(
+            f"{settings.BASE_URL}/bookings/approve-booking/{booking_id}",
             params={"admin_telegram_id": admin_telegram_id},
             timeout=15.0,
         )
@@ -279,6 +300,23 @@ def build_location_choice_keyboard(items: list[dict], prefix: str) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_field_size_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="5x5", callback_data="superadmin_pick_size_5x5"),
+            InlineKeyboardButton(text="6x6", callback_data="superadmin_pick_size_6x6"),
+            InlineKeyboardButton(text="7x7", callback_data="superadmin_pick_size_7x7"),
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Bekor qilish",
+                callback_data="superadmin_cancel_stadium_create",
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def build_admin_panel_message(stadiums: list[dict], role: str):
     text = "🛠 <b>Admin panel</b>\n\n"
     keyboard_rows = []
@@ -312,7 +350,7 @@ def build_admin_panel_message(stadiums: list[dict], role: str):
 
         keyboard_rows.append([
             InlineKeyboardButton(
-                text="📅 Bugungi bronlar",
+                text="📅 Bugungi bron va so'rovlar",
                 callback_data="admin_today_bookings",
             )
         ])
@@ -331,10 +369,8 @@ def build_admin_panel_message(stadiums: list[dict], role: str):
 
         for index, stadium in enumerate(stadiums, 1):
             text += f"<b>{index}. {stadium['name']}</b>\n"
-            text += (
-                f"   ⏰ {format_time_value(stadium.get('start_time'))} - "
-                f"{format_time_value(stadium.get('end_time'))}\n"
-            )
+            text += f"   👥 Maydon: {format_field_size(stadium.get('field_size'))}\n"
+            text += f"   ⭐️ Holati: {format_condition_score(stadium.get('condition_score'))}\n"
             text += f"   💰 {format_price(stadium.get('price_per_hour'))} so'm/soat\n"
             text += f"   🏠 {stadium.get('address', 'Manzil yo`q')}\n\n"
 
@@ -422,15 +458,28 @@ def build_admin_bookings_keyboard(stadium_id: int, context: str, bookings: list[
     for booking in bookings:
         customer_name = booking.get("customer_first_name") or "Mijoz"
         short_name = customer_name if len(customer_name) <= 12 else f"{customer_name[:9]}..."
-        keyboard_rows.append([
-            InlineKeyboardButton(
-                text=(
-                    f"❌ {format_time_value(booking['start_time'])} - "
-                    f"{format_time_value(booking['end_time'])} | {short_name}"
+        time_range = (
+            f"{format_time_value(booking['start_time'])} - "
+            f"{format_time_value(booking['end_time'])}"
+        )
+        if normalize_booking_status(booking.get("status")) == "pending":
+            keyboard_rows.append([
+                InlineKeyboardButton(
+                    text=f"✅ {time_range} | {short_name}",
+                    callback_data=f"admin_approve_{booking['id']}_{stadium_id}_{context}",
                 ),
-                callback_data=f"admin_cancel_{booking['id']}_{stadium_id}_{context}",
-            )
-        ])
+                InlineKeyboardButton(
+                    text="❌ Rad etish",
+                    callback_data=f"admin_cancel_{booking['id']}_{stadium_id}_{context}",
+                ),
+            ])
+        else:
+            keyboard_rows.append([
+                InlineKeyboardButton(
+                    text=f"❌ {time_range} | {short_name}",
+                    callback_data=f"admin_cancel_{booking['id']}_{stadium_id}_{context}",
+                )
+            ])
 
     if context != "today":
         keyboard_rows.append([
@@ -455,14 +504,15 @@ def build_admin_bookings_text(stadium: dict, booking_date: str, bookings: list[d
         f"📋 <b>{stadium['name']}</b>\n\n"
         f"📅 Sana: {booking_date}\n"
         f"🏠 {stadium.get('address', 'Manzil yo`q')}\n"
-        f"⏰ Ish vaqti: {format_time_value(stadium.get('start_time'))} - "
-        f"{format_time_value(stadium.get('end_time'))}\n\n"
+        f"👥 Maydon: {format_field_size(stadium.get('field_size'))}\n"
+        f"⭐️ Holati: {format_condition_score(stadium.get('condition_score'))}\n"
+        f"💡 Qulayliklar: {format_amenities(stadium.get('amenities'))}\n\n"
     )
 
     if not bookings:
-        return text + "Bu sana uchun aktiv bronlar yo'q."
+        return text + "Bu sana uchun bron yoki so'rov yo'q."
 
-    text += "<b>Aktiv bronlar:</b>\n\n"
+    text += "<b>Bron va so'rovlar:</b>\n\n"
     for index, booking in enumerate(bookings, 1):
         username = booking.get("customer_username")
         username_text = f"@{username}" if username else "-"
@@ -470,6 +520,7 @@ def build_admin_bookings_text(stadium: dict, booking_date: str, bookings: list[d
             f"<b>{index}. {format_time_value(booking['start_time'])} - "
             f"{format_time_value(booking['end_time'])}</b>\n"
         )
+        text += f"   {get_booking_status_badge(booking.get('status'))}\n"
         text += f"   👤 {booking.get('customer_first_name') or 'Noma`lum'}\n"
         text += f"   🪪 {username_text}\n"
         text += f"   📞 {booking.get('customer_phone') or '-'}\n\n"
@@ -478,10 +529,10 @@ def build_admin_bookings_text(stadium: dict, booking_date: str, bookings: list[d
 
 
 def build_today_bookings_text(bookings: list[dict]) -> str:
-    text = f"📅 <b>Bugungi bronlar</b>\n\nSana: {date.today().isoformat()}\n\n"
+    text = f"📅 <b>Bugungi bron va so'rovlar</b>\n\nSana: {date.today().isoformat()}\n\n"
 
     if not bookings:
-        return text + "Bugun aktiv bronlar yo'q."
+        return text + "Bugun bron yoki so'rov yo'q."
 
     current_stadium = None
     for booking in bookings:
@@ -496,6 +547,7 @@ def build_today_bookings_text(bookings: list[dict]) -> str:
             f"• {format_time_value(booking['start_time'])} - "
             f"{format_time_value(booking['end_time'])}\n"
         )
+        text += f"  {get_booking_status_badge(booking.get('status'))}\n"
         text += f"  👤 {booking.get('customer_first_name') or 'Noma`lum'}\n"
         text += f"  🪪 {username_text}\n"
         text += f"  📞 {booking.get('customer_phone') or '-'}\n\n"
@@ -508,17 +560,34 @@ def build_today_bookings_keyboard(bookings: list[dict]) -> InlineKeyboardMarkup:
     for booking in bookings:
         stadium_name = booking.get("stadium_name", "Stadion")
         short_stadium = stadium_name if len(stadium_name) <= 14 else f"{stadium_name[:11]}..."
-        rows.append([
-            InlineKeyboardButton(
-                text=(
-                    f"❌ {format_time_value(booking['start_time'])} - "
-                    f"{format_time_value(booking['end_time'])} | {short_stadium}"
+        time_range = (
+            f"{format_time_value(booking['start_time'])} - "
+            f"{format_time_value(booking['end_time'])}"
+        )
+        if normalize_booking_status(booking.get("status")) == "pending":
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"✅ {time_range} | {short_stadium}",
+                    callback_data=(
+                        f"admin_approve_{booking['id']}_{booking['stadium_id']}_today"
+                    ),
                 ),
-                callback_data=(
-                    f"admin_cancel_{booking['id']}_{booking['stadium_id']}_today"
+                InlineKeyboardButton(
+                    text="❌ Rad etish",
+                    callback_data=(
+                        f"admin_cancel_{booking['id']}_{booking['stadium_id']}_today"
+                    ),
                 ),
-            )
-        ])
+            ])
+        else:
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"❌ {time_range} | {short_stadium}",
+                    callback_data=(
+                        f"admin_cancel_{booking['id']}_{booking['stadium_id']}_today"
+                    ),
+                )
+            ])
 
     rows.append([
         InlineKeyboardButton(
@@ -678,13 +747,6 @@ def parse_price_input(value: str) -> Decimal | None:
     return amount
 
 
-def parse_time_input(value: str):
-    try:
-        return datetime.strptime(value.strip(), "%H:%M").time()
-    except ValueError:
-        return None
-
-
 async def require_superadmin(telegram_id: int) -> dict | None:
     profile = await fetch_user_profile(telegram_id)
     if profile.get("role") != "superadmin":
@@ -703,15 +765,27 @@ async def render_admin_panel_message(target, telegram_id: int, *, edit: bool = F
         await target.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
-async def send_cancel_notification(callback: CallbackQuery, booking: dict):
+async def send_booking_status_notification(
+    callback: CallbackQuery,
+    booking: dict,
+    action: str,
+):
     admin_name = callback.from_user.full_name or "Admin"
+
+    if action == "approved":
+        title = "✅ <b>Bron so'rovingiz tasdiqlandi</b>"
+    elif action == "rejected":
+        title = "❌ <b>Bron so'rovingiz rad etildi</b>"
+    else:
+        title = "❌ <b>Broningiz bekor qilindi</b>"
+
     text = (
-        "❌ <b>Broningiz bekor qilindi</b>\n\n"
+        f"{title}\n\n"
         f"🏟 Stadion: {booking.get('stadium_name', 'Stadion')}\n"
         f"📅 Sana: {booking.get('booking_date')}\n"
         f"⏰ {format_time_value(booking.get('start_time'))} - "
         f"{format_time_value(booking.get('end_time'))}\n"
-        f"👤 Bekor qilgan admin: {admin_name}"
+        f"👤 Admin: {admin_name}"
     )
 
     try:
@@ -818,9 +892,10 @@ async def admin_stadium_detail(callback: CallbackQuery):
         f"🏟 <b>{stadium['name']}</b>\n\n"
         f"🏠 {stadium.get('address', 'Manzil yo`q')}\n"
         f"📞 {stadium.get('phone', '-')}\n"
-        f"⏰ {format_time_value(stadium.get('start_time'))} - "
-        f"{format_time_value(stadium.get('end_time'))}\n"
+        f"👥 Maydon o'lchami: {format_field_size(stadium.get('field_size'))}\n"
+        f"⭐️ Stadion holati: {format_condition_score(stadium.get('condition_score'))}\n"
         f"💰 {format_price(stadium.get('price_per_hour'))} so'm/soat\n\n"
+        f"💡 Qulayliklar: {format_amenities(stadium.get('amenities'))}\n\n"
         "📅 Bronlarni ko'rish uchun sanani tanlang:"
     )
 
@@ -1074,37 +1149,55 @@ async def superadmin_stadium_price(message: Message, state: FSMContext):
         return
 
     await state.update_data(stadium_price=str(price))
-    await state.set_state(AdminPanelFlow.waiting_stadium_start_time)
+    await state.set_state(AdminPanelFlow.choosing_stadium_field_size)
     await message.answer(
-        "5-qadam: stadion ochilish vaqtini yuboring.\n"
-        "Masalan: <code>07:00</code>",
-        reply_markup=build_inline_cancel_keyboard("superadmin_cancel_stadium_create"),
-        parse_mode="HTML",
+        "5-qadam: maydon o'lchamini tanlang.",
+        reply_markup=build_field_size_keyboard(),
     )
 
 
-@router.message(AdminPanelFlow.waiting_stadium_start_time)
-async def superadmin_stadium_start_time(message: Message, state: FSMContext):
-    start_time = parse_time_input(message.text or "")
-    if start_time is None:
-        await message.answer("❌ Vaqtni <code>HH:MM</code> formatda yuboring.", parse_mode="HTML")
+@router.callback_query(F.data.startswith("superadmin_pick_size_"))
+async def superadmin_pick_field_size(callback: CallbackQuery, state: FSMContext):
+    field_size = callback.data.split("_")[-1]
+    await state.update_data(stadium_field_size=field_size)
+    await state.set_state(AdminPanelFlow.waiting_stadium_condition_score)
+    await callback.message.edit_text(
+        "6-qadam: stadion holatini 0 dan 10 gacha baholang.\n"
+        "Masalan: <code>8</code>",
+        reply_markup=build_inline_cancel_keyboard("superadmin_cancel_stadium_create"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminPanelFlow.waiting_stadium_condition_score)
+async def superadmin_stadium_condition_score(message: Message, state: FSMContext):
+    raw_value = (message.text or "").strip()
+    if not raw_value.isdigit():
+        await message.answer("❌ Holatni 0 dan 10 gacha butun son qilib yuboring.")
         return
 
-    await state.update_data(stadium_start_time=start_time.strftime("%H:%M"))
-    await state.set_state(AdminPanelFlow.waiting_stadium_end_time)
+    condition_score = int(raw_value)
+    if condition_score < 0 or condition_score > 10:
+        await message.answer("❌ Holat 0 dan 10 gacha bo'lishi kerak.")
+        return
+
+    await state.update_data(stadium_condition_score=condition_score)
+    await state.set_state(AdminPanelFlow.waiting_stadium_amenities)
     await message.answer(
-        "6-qadam: stadion yopilish vaqtini yuboring.\n"
-        "Masalan: <code>23:00</code>",
+        "7-qadam: qulayliklar va sharoitlar haqida yozing.\n"
+        "Masalan: dush, razdivalka, suv, choy, butsi ijarasi.\n"
+        "Agar yo'q bo'lsa, <code>yo'q</code> deb yozing.",
         reply_markup=build_inline_cancel_keyboard("superadmin_cancel_stadium_create"),
         parse_mode="HTML",
     )
 
 
-@router.message(AdminPanelFlow.waiting_stadium_end_time)
-async def superadmin_stadium_end_time(message: Message, state: FSMContext):
-    end_time = parse_time_input(message.text or "")
-    if end_time is None:
-        await message.answer("❌ Vaqtni <code>HH:MM</code> formatda yuboring.", parse_mode="HTML")
+@router.message(AdminPanelFlow.waiting_stadium_amenities)
+async def superadmin_stadium_amenities(message: Message, state: FSMContext):
+    amenities = (message.text or "").strip()
+    if not amenities:
+        await message.answer("❌ Qulayliklar haqida kamida qisqa info yuboring.")
         return
 
     try:
@@ -1113,10 +1206,10 @@ async def superadmin_stadium_end_time(message: Message, state: FSMContext):
         await message.answer("❌ Hududlar ro'yxatini olib bo'lmadi. Qaytadan urinib ko'ring.")
         return
 
-    await state.update_data(stadium_end_time=end_time.strftime("%H:%M"))
+    await state.update_data(stadium_amenities=amenities)
     await state.set_state(AdminPanelFlow.choosing_stadium_region)
     await message.answer(
-        "7-qadam: stadion joylashgan viloyatni tanlang.",
+        "8-qadam: stadion joylashgan viloyatni tanlang.",
         reply_markup=build_location_choice_keyboard(
             regions,
             "superadmin_pick_region_",
@@ -1141,7 +1234,7 @@ async def superadmin_pick_region(callback: CallbackQuery, state: FSMContext):
     await state.update_data(stadium_region_id=region_id)
     await state.set_state(AdminPanelFlow.choosing_stadium_district)
     await callback.message.edit_text(
-        "8-qadam: stadion joylashgan tumanni tanlang.",
+        "9-qadam: stadion joylashgan tumanni tanlang.",
         reply_markup=build_location_choice_keyboard(
             districts,
             "superadmin_pick_district_",
@@ -1167,7 +1260,7 @@ async def superadmin_pick_district(callback: CallbackQuery, state: FSMContext):
     await state.update_data(stadium_district_id=district_id)
     await state.set_state(AdminPanelFlow.choosing_stadium_local_area)
     await callback.message.edit_text(
-        "9-qadam: stadion joylashgan mahalla yoki hududni tanlang.",
+        "10-qadam: stadion joylashgan mahalla yoki hududni tanlang.",
         reply_markup=build_location_choice_keyboard(
             local_areas,
             "superadmin_pick_local_",
@@ -1183,7 +1276,7 @@ async def superadmin_pick_local(callback: CallbackQuery, state: FSMContext):
     await state.update_data(local_area_id=local_area_id)
     await state.set_state(AdminPanelFlow.waiting_stadium_location)
     await callback.message.answer(
-        "10-qadam: stadion lokatsiyasini yuboring.",
+        "11-qadam: stadion lokatsiyasini yuboring.",
         reply_markup=build_location_share_keyboard(),
     )
     await callback.answer()
@@ -1196,9 +1289,10 @@ async def superadmin_stadium_location(message: Message, state: FSMContext):
         "name": state_data["stadium_name"],
         "address": state_data["stadium_address"],
         "phone": state_data["stadium_phone"],
+        "field_size": state_data["stadium_field_size"],
+        "condition_score": state_data["stadium_condition_score"],
+        "amenities": state_data["stadium_amenities"],
         "price_per_hour": state_data["stadium_price"],
-        "start_time": state_data["stadium_start_time"],
-        "end_time": state_data["stadium_end_time"],
         "local_area_id": state_data["local_area_id"],
         "lat": message.location.latitude,
         "long": message.location.longitude,
@@ -1229,6 +1323,11 @@ async def superadmin_stadium_location_wrong_input(message: Message):
         "❌ Iltimos, lokatsiyani yuboring yoki bekor qiling.",
         reply_markup=build_location_share_keyboard(),
     )
+
+
+@router.message(AdminPanelFlow.choosing_stadium_field_size)
+async def superadmin_stadium_field_size_wrong_input(message: Message):
+    await message.answer("❌ Iltimos, maydon o'lchamini tugmalar orqali tanlang.")
 
 
 @router.message(StateFilter(*STADIUM_LOCATION_STATES))
@@ -1442,6 +1541,91 @@ async def superadmin_remove_admin_handler(callback: CallbackQuery):
     await callback.answer("Admin olib tashlandi.")
 
 
+@router.callback_query(F.data.startswith("admin_approve_"))
+async def admin_approve_booking_handler(callback: CallbackQuery):
+    _, _, booking_id, stadium_id, context = callback.data.split("_", 4)
+
+    booking_to_approve = None
+    try:
+        if context == "today":
+            bookings_before = await fetch_admin_bookings(
+                callback.from_user.id,
+                booking_date=date.today().isoformat(),
+            )
+        else:
+            bookings_before = await fetch_admin_bookings(
+                callback.from_user.id,
+                stadium_id=int(stadium_id),
+                booking_date=context,
+            )
+
+        booking_to_approve = next(
+            (item for item in bookings_before if item["id"] == int(booking_id)),
+            None,
+        )
+
+        await approve_admin_booking(callback.from_user.id, int(booking_id))
+
+        if context == "today":
+            bookings = await fetch_admin_bookings(
+                callback.from_user.id,
+                booking_date=date.today().isoformat(),
+            )
+        else:
+            bookings = await fetch_admin_bookings(
+                callback.from_user.id,
+                stadium_id=int(stadium_id),
+                booking_date=context,
+            )
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 403:
+            await callback.answer(
+                "Siz bu bronni tasdiqlay olmaysiz.",
+                show_alert=True,
+            )
+            return
+        await callback.answer(
+            extract_error_detail(exc, "Bronni tasdiqlab bo'lmadi."),
+            show_alert=True,
+        )
+        return
+
+    if context == "today":
+        await callback.message.edit_text(
+            build_today_bookings_text(bookings),
+            reply_markup=build_today_bookings_keyboard(bookings),
+            parse_mode="HTML",
+        )
+    else:
+        stadium = managed_stadium_cache.get(stadium_id)
+        if not stadium:
+            await callback.answer(
+                "Bron tasdiqlandi, lekin stadion ma'lumotini topib bo'lmadi.",
+                show_alert=True,
+            )
+            return
+
+        await callback.message.edit_text(
+            build_admin_bookings_text(stadium, context, bookings),
+            reply_markup=build_admin_bookings_keyboard(
+                int(stadium_id),
+                context,
+                bookings,
+            ),
+            parse_mode="HTML",
+        )
+
+    if booking_to_approve is not None:
+        await send_booking_status_notification(
+            callback,
+            booking_to_approve,
+            "approved",
+        )
+
+    await callback.answer("Bron tasdiqlandi.")
+
+
 @router.callback_query(F.data.startswith("admin_cancel_"))
 async def admin_cancel_booking_handler(callback: CallbackQuery):
     _, _, booking_id, stadium_id, context = callback.data.split("_", 4)
@@ -1517,7 +1701,16 @@ async def admin_cancel_booking_handler(callback: CallbackQuery):
             parse_mode="HTML",
         )
 
+    notification_action = "cancelled"
     if booking_to_cancel is not None:
-        await send_cancel_notification(callback, booking_to_cancel)
+        if normalize_booking_status(booking_to_cancel.get("status")) == "pending":
+            notification_action = "rejected"
+        await send_booking_status_notification(
+            callback,
+            booking_to_cancel,
+            notification_action,
+        )
 
-    await callback.answer("Bron bekor qilindi.")
+    await callback.answer(
+        "So'rov rad etildi." if notification_action == "rejected" else "Bron bekor qilindi."
+    )

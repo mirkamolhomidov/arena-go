@@ -5,8 +5,10 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from app.bot.handlers.user.stadium_common import (
+    format_amenities,
+    format_condition_score,
+    format_field_size,
     format_price,
-    format_time_value,
     search_results_cache,
     stadium_cache,
 )
@@ -76,6 +78,8 @@ def build_stadium_list_message(stadiums):
         name = stadium.get('name', 'Noma\'lum stadion')
         address = stadium.get('address', 'Manzil ko\'rsatilmagan')
         phone = stadium.get('phone', 'Telefon yo\'q')
+        field_size = format_field_size(stadium.get('field_size'))
+        condition_score = format_condition_score(stadium.get('condition_score'))
         stadium_id = stadium.get('id') or stadium.get('stadium_id') or idx
 
         # Stadion ma'lumotlarini cache ga saqlash
@@ -95,6 +99,8 @@ def build_stadium_list_message(stadiums):
 
         text += f"{emoji} <b>{idx}. {name}</b>\n"
         text += f"   📏 Masofa: <code>{distance_text}</code>\n"
+        text += f"   👥 Maydon: {field_size}\n"
+        text += f"   ⭐️ Holati: {condition_score}\n"
         text += f"   🏠 {address}\n"
         text += f"   📞 {phone}\n\n"
 
@@ -296,10 +302,10 @@ async def show_stadium_detail(callback: CallbackQuery):
     name = stadium.get('name', 'Noma\'lum stadion')
     address = stadium.get('address', 'Manzil ko\'rsatilmagan')
     phone = stadium.get('phone', 'Telefon yo\'q')
-    start_time = format_time_value(stadium.get('start_time'))
-    end_time = format_time_value(stadium.get('end_time'))
+    field_size = format_field_size(stadium.get('field_size'))
+    condition_score = format_condition_score(stadium.get('condition_score'))
+    amenities = format_amenities(stadium.get('amenities'))
     price = stadium.get('price_per_hour', 0)
-    status = stadium.get('status', 'unknown')
     local_area = stadium.get('local_area', '-')
     location_url = stadium.get('location_url', '')
 
@@ -313,9 +319,7 @@ async def show_stadium_detail(callback: CallbackQuery):
 
         distance_line = f"📏 Masofa: <code>{distance_text}</code>\n"
 
-    # Status emoji
-    status_emoji = "🟢" if status == "open" else "🔴"
-    status_text = "Ochiq" if status == "open" else "Yopiq"
+    condition_suffix = " ✅" if stadium.get('condition_score') is not None else ""
 
     # Tafsilotli xabar
     detail_text = (
@@ -323,10 +327,11 @@ async def show_stadium_detail(callback: CallbackQuery):
         f"{distance_line}"
         f"🏠 Manzil: {address}\n"
         f"📍 Hudud: {local_area}\n"
-        f"📞 Telefon: {phone}\n\n"
-        f"⏰ Ish vaqti: {start_time} - {end_time}\n"
+        f"📞 Telefon: {phone}\n"
+        f"👥 Maydon o'lchami: {field_size}\n"
+        f"⭐️ Stadion holati: {condition_score}{condition_suffix}\n"
         f"💰 Narx: {format_price(price)} so'm/soat\n"
-        f"{status_emoji} Holat: {status_text}"
+        f"💡 Qulayliklar: {amenities}"
     )
 
     # Tugmalar

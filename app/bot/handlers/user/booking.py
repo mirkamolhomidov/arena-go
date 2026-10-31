@@ -9,8 +9,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.handlers.user.stadium_common import (
     build_local_stadiums_message,
+    format_amenities,
+    format_condition_score,
+    format_field_size,
+    get_booking_status_badge,
     format_price,
     format_time_value,
+    normalize_booking_status,
     stadium_cache,
 )
 from app.bot.keyboards.main_menu import get_main_menu_for_user
@@ -174,9 +179,11 @@ def format_booked_slots(bookings: list[dict]) -> str:
 
     lines = []
     for booking in bookings:
+        status = normalize_booking_status(booking.get("status"))
+        status_note = " (tasdiqlanmoqda)" if status == "pending" else ""
         lines.append(
             f"• {format_time_value(booking['start_time'])} - "
-            f"{format_time_value(booking['end_time'])}"
+            f"{format_time_value(booking['end_time'])}{status_note}"
         )
 
     return "\n".join(lines)
@@ -244,11 +251,11 @@ async def fetch_my_bookings(telegram_id: int) -> list[dict]:
 def build_my_bookings_text(bookings: list[dict]) -> str:
     if not bookings:
         return (
-            "📅 <b>Mening bronlarim</b>\n\n"
-            "Sizda hozircha aktiv bronlar yo'q."
+            "📅 <b>Mening bronlarim va so'rovlarim</b>\n\n"
+            "Sizda hozircha aktiv bron yoki so'rov yo'q."
         )
 
-    text = "📅 <b>Mening bronlarim</b>\n\n"
+    text = "📅 <b>Mening bronlarim va so'rovlarim</b>\n\n"
     for index, booking in enumerate(bookings, 1):
         price = format_price(booking.get("price_per_hour"))
         text += f"<b>{index}. {booking['stadium_name']}</b>\n"
@@ -257,6 +264,7 @@ def build_my_bookings_text(bookings: list[dict]) -> str:
             f"   ⏰ {format_time_value(booking['start_time'])} - "
             f"{format_time_value(booking['end_time'])}\n"
         )
+        text += f"   {get_booking_status_badge(booking.get('status'))}\n"
         text += f"   💰 {price} so'm/soat\n"
         text += f"   🏠 {booking['stadium_address']}\n\n"
 
@@ -330,8 +338,9 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
         stadium_name=stadium.get("name", "Noma'lum stadion"),
         stadium_address=stadium.get("address", "Manzil ko'rsatilmagan"),
         price_per_hour=stadium.get("price_per_hour", 0),
-        stadium_start_time=format_time_value(stadium.get("start_time")),
-        stadium_end_time=format_time_value(stadium.get("end_time")),
+        stadium_field_size=format_field_size(stadium.get("field_size")),
+        stadium_condition_score=format_condition_score(stadium.get("condition_score")),
+        stadium_amenities=format_amenities(stadium.get("amenities")),
     )
 
     stadium_name = stadium.get("name", "Noma'lum stadion")
@@ -340,9 +349,10 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
     booking_text = (
         f"📅 <b>{stadium_name} uchun bron</b>\n\n"
         f"🏠 {stadium_address}\n"
-        f"⏰ Ish vaqti: {format_time_value(stadium.get('start_time'))} - "
-        f"{format_time_value(stadium.get('end_time'))}\n"
+        f"👥 Maydon: {format_field_size(stadium.get('field_size'))}\n"
+        f"⭐️ Holati: {format_condition_score(stadium.get('condition_score'))}\n"
         f"💰 Narx: {format_price(stadium.get('price_per_hour'))} so'm/soat\n\n"
+        f"💡 Qulayliklar: {format_amenities(stadium.get('amenities'))}\n\n"
         "📆 Bron qilish uchun sanani tanlang:"
     )
 
@@ -377,8 +387,8 @@ async def choose_booking_date(callback: CallbackQuery, state: FSMContext):
     prompt_text = (
         f"📆 <b>Sana tanlandi:</b> {selected_date}\n\n"
         f"🏟 {state_data.get('stadium_name', 'Stadion')}\n"
-        f"⏰ Ish vaqti: {state_data.get('stadium_start_time', '-')} - "
-        f"{state_data.get('stadium_end_time', '-')}\n\n"
+        f"👥 Maydon: {state_data.get('stadium_field_size', '-')}\n"
+        f"⭐️ Holati: {state_data.get('stadium_condition_score', '-')}\n\n"
         f"🔒 <b>Band vaqtlar:</b>\n{format_booked_slots(bookings)}\n\n"
         "✍️ Vaqt oralig'ini yuboring.\n"
         "Masalan: <code>09:00-10:30</code>"
@@ -465,7 +475,7 @@ async def complete_booking(message: Message, state: FSMContext):
     )
 
     success_text = (
-        f"✅ <b>Bron muvaffaqiyatli yaratildi</b>\n\n"
+        f"✅ <b>Bron so'rovi yuborildi</b>\n\n"
         f"🏟 {success_stadium_name}\n"
         f"🏠 {success_stadium_address}\n"
         f"📅 {state_data['booking_date']}\n"
@@ -475,6 +485,8 @@ async def complete_booking(message: Message, state: FSMContext):
 
     if total_price is not None:
         success_text += f"🧾 Taxminiy jami: {total_price} so'm\n"
+
+    success_text += "\n⏳ Admin tasdiqlagandan keyin bron faollashadi."
 
     await state.clear()
     await message.answer(
@@ -565,7 +577,7 @@ async def confirm_cancel_booking(callback: CallbackQuery):
         await callback.answer()
         return
 
-    await callback.message.edit_text("✅ Bron bekor qilindi.")
+    await callback.message.edit_text("✅ Bron yoki so'rov bekor qilindi.")
 
     try:
         bookings = await fetch_my_bookings(callback.from_user.id)

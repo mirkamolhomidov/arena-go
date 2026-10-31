@@ -1,12 +1,16 @@
 from datetime import date, time
-from typing import Optional
-from sqlalchemy import BigInteger
-from sqlmodel import Column, SQLModel, Field
 from enum import Enum
+from typing import Optional
+
+from sqlalchemy import BigInteger, Column, Enum as SAEnum
+from sqlmodel import Field, SQLModel
+
 
 class BookingStatus(str, Enum):
+    PENDING = "pending"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
+
 
 class Bookings(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -17,4 +21,11 @@ class Bookings(SQLModel, table=True):
     booking_date: date = Field(nullable=False)
     start_time: time = Field(nullable=False)
     end_time: time = Field(nullable=False)
-    status: BookingStatus = Field(default=BookingStatus.CONFIRMED)
+    status: BookingStatus = Field(
+        default=BookingStatus.PENDING,
+        sa_column=Column(
+            SAEnum(BookingStatus, name="bookingstatus"),
+            nullable=False,
+            server_default=BookingStatus.PENDING.name,
+        ),
+    )

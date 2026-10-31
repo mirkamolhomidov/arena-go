@@ -10,7 +10,8 @@ class UserCreate(SQLModel):
         max_length=400,
         description="Foydalanuvchi ismi"
     )
-    username: str = Field(
+    username: str | None = Field(
+        default=None,
         max_length=70,
         description="Foydalanuvchi nomi"
     )

@@ -24,7 +24,7 @@ async def get_booking(
     booking_date: Optional[date] = None,
     stadium_id: Optional[int] = None,
     user_telegram_id: Optional[int] = None,
-    status: Optional[BookingStatus] = BookingStatus.CONFIRMED,
+    status: Optional[BookingStatus] = None,
     session: AsyncSession = Depends(get_session)
 ):
     """Return bookings using optional filters."""
@@ -80,21 +80,42 @@ async def get_admin_bookings(
         "data": bookings
     }
 
+
 @bookingsRouter.post('/create-booking')
 async def create_booking(
     data: BookingCreate,
     session: AsyncSession = Depends(get_session)
 ):
-    """Create a booking after service-level validation."""
+    """Create a booking request after service-level validation."""
     new_booking = await bookingService.add_booking(
         session=session,
         data=data
     )
 
     return {
-        "message": "Muvaffaqiyatli qo'shildi.",
+        "message": "Bron so'rovi yuborildi.",
         "data": new_booking
     }
+
+
+@bookingsRouter.patch('/approve-booking/{booking_id}')
+async def approve_booking(
+    booking_id: int,
+    admin_telegram_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    """Approve a pending booking request for an admin-managed stadium."""
+    approved_booking = await bookingService.approve_booking(
+        session=session,
+        booking_id=booking_id,
+        admin_telegram_id=admin_telegram_id,
+    )
+
+    return {
+        "message": "Bron muvaffaqiyatli tasdiqlandi.",
+        "data": approved_booking,
+    }
+
 
 @bookingsRouter.patch('/update-booking/{booking_id}')
 async def update_booking(

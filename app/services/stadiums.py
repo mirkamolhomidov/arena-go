@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -29,7 +28,7 @@ class StadiumService(ServiceErrorHandlerMixin):
             user_point = f"POINT({long} {lat})"
             distance_query = func.ST_Distance(
                 Stadiums.location,
-                func.ST_GeogFromText(f"SRID=4326;{user_point}")
+                func.ST_GeogFromText(f"SRID=4326;{user_point}"),
             ).label("distance_meters")
 
             statement = (
@@ -98,15 +97,6 @@ class StadiumService(ServiceErrorHandlerMixin):
         except Exception as error:
             raise self._handle_exception(error, action="getManagedStadiums")
 
-    def get_stadium_status(self, start_time, end_time) -> str:
-        """Return whether the stadium is currently open or closed."""
-        now = datetime.now().time()
-
-        if start_time < end_time:
-            return "open" if start_time <= now <= end_time else "closed"
-
-        return "open" if (now >= start_time or now <= end_time) else "closed"
-
     def formatDistance(self, meters: float) -> str:
         """Format a meter distance into a readable Uzbek string."""
         if meters < 1000:
@@ -166,10 +156,10 @@ class StadiumService(ServiceErrorHandlerMixin):
             "name": stadium.name,
             "address": stadium.address,
             "phone": stadium.phone,
-            "start_time": stadium.start_time,
-            "end_time": stadium.end_time,
+            "field_size": stadium.field_size,
+            "condition_score": stadium.condition_score,
+            "amenities": stadium.amenities,
             "price_per_hour": stadium.price_per_hour,
-            "status": self.get_stadium_status(stadium.start_time, stadium.end_time),
             "local_area": area_name,
             "lat": lat,
             "long": long,
