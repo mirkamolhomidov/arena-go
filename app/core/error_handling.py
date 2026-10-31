@@ -93,17 +93,16 @@ def register_exception_handlers(app: FastAPI) -> None:
         exc: RequestValidationError,
     ) -> JSONResponse:
         """Return validation details while logging request metadata."""
-        logger.warning(
-            "Request validation failed",
+        log_exception(
+            logger,
+            exc,
+            context="RequestValidationError",
+            source="api",
+            status_code=422,
             extra={
-                "status_code": 422,
-                "context_data": {
-                    "source": "api",
-                    "context": "RequestValidationError",
-                    "path": request.url.path,
-                    "method": request.method,
-                    "errors": exc.errors(),
-                },
+                "path": request.url.path,
+                "method": request.method,
+                "errors": exc.errors(),
             },
         )
         return JSONResponse(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -18,6 +18,9 @@ from app.models.users import UserRole, Users
 from app.schemas.bookings import BookingCreate
 
 
+ACTIVE_BOOKING_STATUSES = (BookingStatus.PENDING, BookingStatus.CONFIRMED)
+
+
 class BookingService(ServiceErrorHandlerMixin):
     """Provide booking CRUD, validation, and scoped admin access."""
 
@@ -27,7 +30,7 @@ class BookingService(ServiceErrorHandlerMixin):
         booking_date: date | None = None,
         stadium_id: int | None = None,
         user_telegram_id: int | None = None,
-        status: BookingStatus | None = BookingStatus.CONFIRMED,
+        status: BookingStatus | None = None,
     ):
         """Return bookings filtered by date, stadium, user, or status."""
         try:
@@ -44,6 +47,8 @@ class BookingService(ServiceErrorHandlerMixin):
 
             if status is not None:
                 statement = statement.where(Bookings.status == status)
+            else:
+                statement = statement.where(Bookings.status != BookingStatus.CANCELLED)
 
             statement = statement.order_by(Bookings.booking_date, Bookings.start_time)
             return (await session.exec(statement)).all()
@@ -51,17 +56,16 @@ class BookingService(ServiceErrorHandlerMixin):
             raise self._handle_exception(error, action="get_booking")
 
     async def add_booking(self, session: AsyncSession, data: BookingCreate):
-        """Create a booking after validating time, user, and stadium rules."""
+        """Create a booking request after validating time, user, and slot rules."""
         try:
-            stadium = await self._get_stadium_or_404(session, data.stadium_id)
+            await self._get_stadium_or_404(session, data.stadium_id)
             await self._get_user_or_404(session, data.user_telegram_id)
 
-            self._validate_stadium_hours(stadium, data)
-            self._validate_booking_time(data)
+            self._validate_booking_time(data.booking_date, data.start_time)
             await self._ensure_time_slot_available(session, data)
 
             booking_data = data.model_dump()
-            booking_data["status"] = data.status or BookingStatus.CONFIRMED
+            booking_data["status"] = BookingStatus.PENDING
 
             db_obj = Bookings(**booking_data)
             session.add(db_obj)
@@ -81,10 +85,9 @@ class BookingService(ServiceErrorHandlerMixin):
         """Update an existing booking with a validated payload."""
         try:
             db_obj = await self._get_booking_or_404(session, booking_id)
-            stadium = await self._get_stadium_or_404(session, data.stadium_id)
+            await self._get_stadium_or_404(session, data.stadium_id)
             await self._get_user_or_404(session, data.user_telegram_id)
-            self._validate_stadium_hours(stadium, data)
-            self._validate_booking_time(data)
+            self._validate_booking_time(data.booking_date, data.start_time)
             await self._ensure_time_slot_available(
                 session,
                 data,
@@ -102,6 +105,57 @@ class BookingService(ServiceErrorHandlerMixin):
         except Exception as error:
             await session.rollback()
             raise self._handle_exception(error, action="update_booking")
+
+    async def approve_booking(
+        self,
+        session: AsyncSession,
+        booking_id: int,
+        admin_telegram_id: int,
+    ):
+        """Approve a pending booking request for an allowed admin actor."""
+        try:
+            db_obj = await self._get_booking_or_404(session, booking_id)
+            admin_user, managed_stadium_ids = await self._get_admin_scope(
+                session,
+                admin_telegram_id,
+            )
+
+            if (
+                admin_user.role != UserRole.superadmin
+                and db_obj.stadium_id not in managed_stadium_ids
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Siz bu stadion bronlarini boshqara olmaysiz",
+                )
+
+            if db_obj.status == BookingStatus.CANCELLED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bekor qilingan so'rovni tasdiqlab bo'lmaydi",
+                )
+
+            if db_obj.status == BookingStatus.CONFIRMED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bron allaqachon tasdiqlangan",
+                )
+
+            self._validate_booking_time(db_obj.booking_date, db_obj.start_time)
+            await self._ensure_existing_booking_slot_available(
+                session,
+                db_obj,
+                exclude_booking_id=db_obj.id,
+            )
+
+            db_obj.status = BookingStatus.CONFIRMED
+            session.add(db_obj)
+            await session.commit()
+            await session.refresh(db_obj)
+            return db_obj
+        except Exception as error:
+            await session.rollback()
+            raise self._handle_exception(error, action="approve_booking")
 
     async def delete_booking(self, session: AsyncSession, booking_id: int):
         """Delete a booking by its primary key."""
@@ -121,7 +175,7 @@ class BookingService(ServiceErrorHandlerMixin):
         user_telegram_id: int | None = None,
         admin_telegram_id: int | None = None,
     ):
-        """Cancel a booking for its owner or a scoped admin actor."""
+        """Cancel a booking or booking request for its owner or a scoped admin actor."""
         try:
             db_obj = await self._get_booking_or_404(session, booking_id)
 
@@ -171,7 +225,7 @@ class BookingService(ServiceErrorHandlerMixin):
         booking_date: date | None = None,
         include_cancelled: bool = False,
     ):
-        """Return bookings visible to an admin or superadmin."""
+        """Return booking requests and bookings visible to an admin or superadmin."""
         try:
             admin_user, managed_stadium_ids = await self._get_admin_scope(
                 session,
@@ -212,7 +266,7 @@ class BookingService(ServiceErrorHandlerMixin):
                 statement = statement.where(Bookings.booking_date == booking_date)
 
             if not include_cancelled:
-                statement = statement.where(Bookings.status == BookingStatus.CONFIRMED)
+                statement = statement.where(Bookings.status != BookingStatus.CANCELLED)
 
             statement = statement.order_by(Bookings.booking_date, Bookings.start_time)
             results = (await session.exec(statement)).all()
@@ -226,7 +280,7 @@ class BookingService(ServiceErrorHandlerMixin):
         telegram_id: int,
         include_history: bool = False,
     ):
-        """Return future or historical bookings for a single user."""
+        """Return future or historical booking requests for a single user."""
         try:
             now = datetime.now()
             statement = (
@@ -236,15 +290,13 @@ class BookingService(ServiceErrorHandlerMixin):
                     Stadiums.address.label("stadium_address"),
                     Stadiums.phone.label("stadium_phone"),
                     Stadiums.price_per_hour.label("price_per_hour"),
-                    Stadiums.start_time.label("stadium_start_time"),
-                    Stadiums.end_time.label("stadium_end_time"),
                 )
                 .join(Stadiums, Stadiums.id == Bookings.stadium_id)
                 .where(Bookings.user_telegram_id == telegram_id)
             )
 
             if not include_history:
-                statement = statement.where(Bookings.status == BookingStatus.CONFIRMED)
+                statement = statement.where(Bookings.status != BookingStatus.CANCELLED)
                 statement = statement.where(
                     or_(
                         Bookings.booking_date > now.date(),
@@ -276,10 +328,6 @@ class BookingService(ServiceErrorHandlerMixin):
             "start_time": booking.start_time,
             "end_time": booking.end_time,
             "status": booking.status,
-            "stadium_working_hours": (
-                f"{row.stadium_start_time.strftime('%H:%M')} - "
-                f"{row.stadium_end_time.strftime('%H:%M')}"
-            ),
         }
 
     def _serialize_admin_booking(self, row) -> dict:
@@ -341,21 +389,9 @@ class BookingService(ServiceErrorHandlerMixin):
             raise HTTPException(status_code=404, detail="Bron topilmadi")
         return booking
 
-    def _validate_stadium_hours(self, stadium: Stadiums, data: BookingCreate) -> None:
-        """Ensure the requested booking is inside stadium working hours."""
-        if data.start_time < stadium.start_time or data.end_time > stadium.end_time:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Bron vaqti stadion ish vaqtiga mos emas. "
-                    f"Ish vaqti: {stadium.start_time.strftime('%H:%M')} - "
-                    f"{stadium.end_time.strftime('%H:%M')}"
-                ),
-            )
-
-    def _validate_booking_time(self, data: BookingCreate) -> None:
+    def _validate_booking_time(self, booking_date: date, start_time: time) -> None:
         """Reject booking requests that target time slots in the past."""
-        if data.booking_date == date.today() and data.start_time <= datetime.now().time():
+        if booking_date == date.today() and start_time <= datetime.now().time():
             raise HTTPException(
                 status_code=400,
                 detail="O'tib ketgan vaqtga bron qilib bo'lmaydi",
@@ -368,13 +404,27 @@ class BookingService(ServiceErrorHandlerMixin):
         *,
         exclude_booking_id: int | None = None,
     ) -> None:
-        """Reject overlapping confirmed bookings for the same stadium slot."""
+        """Reject overlapping active bookings for the same stadium slot."""
+        await self._ensure_existing_booking_slot_available(
+            session,
+            data,
+            exclude_booking_id=exclude_booking_id,
+        )
+
+    async def _ensure_existing_booking_slot_available(
+        self,
+        session: AsyncSession,
+        booking: BookingCreate | Bookings,
+        *,
+        exclude_booking_id: int | None = None,
+    ) -> None:
+        """Reject overlapping pending or confirmed bookings for the same slot."""
         statement = select(Bookings).where(
-            Bookings.stadium_id == data.stadium_id,
-            Bookings.booking_date == data.booking_date,
-            Bookings.status == BookingStatus.CONFIRMED,
-            Bookings.start_time < data.end_time,
-            Bookings.end_time > data.start_time,
+            Bookings.stadium_id == booking.stadium_id,
+            Bookings.booking_date == booking.booking_date,
+            Bookings.status.in_(ACTIVE_BOOKING_STATUSES),
+            Bookings.start_time < booking.end_time,
+            Bookings.end_time > booking.start_time,
         )
 
         if exclude_booking_id is not None:
@@ -386,7 +436,7 @@ class BookingService(ServiceErrorHandlerMixin):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Tanlangan vaqt oralig'i allaqachon band. "
+                    "Tanlangan vaqt oralig'i allaqachon band yoki tasdiqlash jarayonida. "
                     f"Band vaqt: {overlapping_booking.start_time.strftime('%H:%M')} - "
                     f"{overlapping_booking.end_time.strftime('%H:%M')}"
                 ),

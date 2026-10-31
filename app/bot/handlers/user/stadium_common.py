@@ -27,6 +27,53 @@ def format_time_value(value) -> str:
     return value_str[:5] if len(value_str) >= 5 else value_str
 
 
+def format_field_size(value) -> str:
+    if value is None:
+        return "-"
+
+    value_str = str(value).strip()
+    if not value_str:
+        return "-"
+
+    return value_str.replace("x", "×").replace("X", "×")
+
+
+def format_condition_score(value) -> str:
+    if value is None or value == "":
+        return "-"
+
+    return f"{value}/10"
+
+
+def format_amenities(value) -> str:
+    if value is None:
+        return "Ko'rsatilmagan"
+
+    value_str = str(value).strip()
+    return value_str or "Ko'rsatilmagan"
+
+
+def normalize_booking_status(value) -> str:
+    if value is None:
+        return ""
+
+    raw_value = getattr(value, "value", value)
+    value_str = str(raw_value).strip().lower()
+    if "." in value_str:
+        value_str = value_str.split(".")[-1]
+    return value_str
+
+
+def get_booking_status_badge(value) -> str:
+    status = normalize_booking_status(value)
+    mapping = {
+        "pending": "⏳ Tasdiq kutilmoqda",
+        "confirmed": "✅ Tasdiqlangan",
+        "cancelled": "❌ Bekor qilingan",
+    }
+    return mapping.get(status, "ℹ️ Holati noma'lum")
+
+
 def build_local_stadiums_message(stadiums: list[dict]):
     if not stadiums:
         return (
@@ -47,12 +94,13 @@ def build_local_stadiums_message(stadiums: list[dict]):
         name = stadium.get("name", "Noma'lum stadion")
         short_name = name if len(name) <= 18 else f"{name[:15]}..."
         address = stadium.get("address", "Manzil ko'rsatilmagan")
-        start_time = format_time_value(stadium.get("start_time"))
-        end_time = format_time_value(stadium.get("end_time"))
         price = format_price(stadium.get("price_per_hour"))
+        field_size = format_field_size(stadium.get("field_size"))
+        condition_score = format_condition_score(stadium.get("condition_score"))
 
         text += f"<b>{idx}. {name}</b>\n"
-        text += f"   ⏰ {start_time} - {end_time}\n"
+        text += f"   👥 Maydon: {field_size}\n"
+        text += f"   ⭐️ Holati: {condition_score}\n"
         text += f"   💰 {price} so'm/soat\n"
         text += f"   🏠 {address}\n\n"
 
